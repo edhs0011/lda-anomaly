@@ -1,2 +1,2 @@
-#LDA Anamaly Detection
-*Re-write spot-ml by Python
+# LDA Anamaly Detection
+ - Re-write spot-ml by Python
