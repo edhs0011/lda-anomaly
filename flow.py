@@ -1,5 +1,6 @@
 import pandas as pd
 from analysis import FlowConnectsAnalysis
+from model import FlowSuspiciousConnectsModel
 
 config = {
     "topic_count": 20
@@ -7,9 +8,8 @@ config = {
 
 def main():
     data = pd.read_csv("test.csv")
-    analysis = FlowConnectsAnalysis(data, config)
-    scored_data = analysis.detect()
-    print scored_data
+    model = FlowSuspiciousConnectsModel(data, config)
+    model.train_new_model()
 
 if __name__ == "__main__":
     main()
