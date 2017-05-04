@@ -1,72 +1,96 @@
-class FlowSuspiciousConnectsModel:
+import pandas as pd
+import numpy as np
+import lda
 
-    # def __init__(self, topic_count, ip_to_topic_mix, word_to_per_topic_prob, time_cuts, ibyt_cuts, ipkt_cuts):
-    #     self.topic_count = topic_count
-    #     self.ip_to_topic_mix = ip_to_topic_mix
-    #     self.word_to_per_topic_prob = word_to_per_topic_prob
-    #     self.time_cuts = time_cuts
-    #     self.ibyt_cuts = ibyt_cuts
-    #     self.ipkt_cuts = ipkt_cuts
+class FlowSuspiciousConnectsModel:
 
     def __init__(self, data, config):
         self.data = data    # trhour,trminute,trsec,sip,dip,sport,dport,ipkt,ibyt
         self.config = config
 
     def _compute_deciles(self, df):
-        return df.quantile([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0])
+        return df.quantile([0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9])
 
     def _compute_quantile(self, df):
-        return df.quantile([0.2, 0.4, 0.6, 0.8, 1.0])
-
-    def _quantile_bin(self, val, cuts):
-        for i, v in enumerate(cuts):
-            if val >= v:
-                return i
+        return df.quantile([0, 0.2, 0.4, 0.6, 0.8])
 
     def _assemble_words(self, df):
         src = df["sport"]
         dst = df["dport"]
-        time_bin = self._quantile_bin(df["time"], df["time_cuts"])
-        ibyt_bin = self._quantile_bin(df["ibyt"], df["ibyt_cuts"])
-        ipkt_bin = self._quantile_bin(df["ipkt_time"], df["ipkt_cuts"])
-        port_word = None
+        time_bin = df["time_bin"]
+        ibyt_bin = df["ibyt_bin"]
+        ipkt_bin = df["ipkt_bin"]
 
         if src == 0 and dst == 0:
-            port_word = "0"
-        elif (src > 0 and dst == 0) or (src <= 1024 and dst > 1024):
-            port_word = str(src)
-        elif (src == 0 and dst > 0) or (src > 1024 and dst <= 1024):
-            port_word = str(dst)
+            base = "_".join(["0", time_bin, ibyt_bin, ipkt_bin])
+            return base, base
+
+        elif src > 0 and dst == 0:
+            base = "_".join([str(src), time_bin, ibyt_bin, ipkt_bin])
+            return "-1_" + base, base
+
+        elif src == 0 and dst > 0:
+            base = "_".join([str(dst), time_bin, ibyt_bin, ipkt_bin])
+            return base, "-1_" + base
+
         elif src <= 1024 and dst <= 1024:
-            port_word = "111111"
+            base = "_".join(["111111", time_bin, ibyt_bin, ipkt_bin])
+            return base, base
+
+        elif src <= 1024 and dst > 1024:
+            base = "_".join([str(src), time_bin, ibyt_bin, ipkt_bin])
+            return "-1_" + base, base
+
+        elif src > 1024 and dst <= 1024:
+            base = "_".join([str(dst), time_bin, ibyt_bin, ipkt_bin])
+            return base, "-1_" + base
+
         else:
-            port_word = "333333"
+            base = "_".join(["333333", time_bin, ibyt_bin, ipkt_bin])
+            return base, base
 
-        src_word = "_".join(port_word, time_bin, ibyt_bin, ipkt_bin)
-        dst_word = "_".join(port_word, time_bin, ibyt_bin, ipkt_bin)
-        if src > dst:
-            src_word = "_".join("-1", src_word)
-        elif src < dst:
-            dst_word = "_".join("-1", dst_word)
-        return src_word, dst_word
-            
-
-    def test(self, x):
-        print x["trhour"]
-        # return x["trhour"]
+    def _compute_word_count_table(self):
+        data = self.data
+        data["time"] = data["trhour"] * 3600 + data["trminute"] * 60 + data["trsec"]
+        time_cut = self._compute_quantile(data["time"])
+        ibyt_cut = self._compute_deciles(data["ibyt"])
+        ipkt_cut = self._compute_deciles(data["ipkt"])
+        data["time_bin"] = np.digitize(data["time"], time_cut, right=True).astype(str)
+        data["ibyt_bin"] = np.digitize(data["ibyt"], ibyt_cut, right=True).astype(str)
+        data["ipkt_bin"] = np.digitize(data["ipkt"], ipkt_cut, right=True).astype(str)
+        data["src_word"] = [w[0] for w in data.apply(self._assemble_words, axis=1)]
+        data["dst_word"] = [w[1] for w in data.apply(self._assemble_words, axis=1)]
+        s_word_count = data.groupby(["sip", "src_word"]).size()
+        d_word_count = data.groupby(["dip", "dst_word"]).size()
+        wc_table = pd.concat([s_word_count, d_word_count]).sum(level=[0, 1])
+        wc_table.index.set_names(["ip", "word"], inplace=True)
+        return wc_table
 
     def train_new_model(self):
-        self.data["time"] = self.data["trhour"] * 3600 + self.data["trminute"] * 60 + self.data["trsec"]
-        print self.data["ibyt"]
-        print self.data["ibyt"].quantile([0.5])
-        self.data["time_cuts"] = self._compute_quantile(self.data["time"])
-        print self.data["time_cuts"]
-        self.data["ibyt_cuts"] = self._compute_deciles(self.data["ibyt"])
-        print self.data["ibyt_cuts"]
-        self.data["ipkt_cuts"] = self._compute_deciles(self.data["ipkt"])
-        print self.data.apply(self._assemble_words, axis=1)
-        
-        # self.data["src_word"], self.data["dst_word"] = self._assemble_words()
+        df_wc_table = self._compute_word_count_table()
+        self.train(df_wc_table)
+        self.predict(df_wc_table)
+    
+    def train(self, df):
+        df = df.unstack().fillna(0).astype(int)
+        X = df.as_matrix()
+        self.model = lda.LDA(n_topics=20, n_iter=20, random_state=1)
+        self.model.fit(X)
 
-    def score(self):
-        pass
+    def predict(self, df_ip_wc):
+        df_topic_word = df_ip_wc.unstack().fillna(0).astype(int)
+        X = df_topic_word.as_matrix()
+        y = self.model.transform(X)
+        vocal = df_topic_word.columns.values
+        titles = df_topic_word.index.values
+        ss_ip_topic = pd.Series(xrange(len(titles)), index=pd.Index(titles, name="ip"), name="ip_topic")
+        ss_word_topic = pd.Series(xrange(len(vocal)), index=pd.Index(vocal, name="word"), name="word_topic")
+        ix = df_ip_wc.to_frame().join(ss_ip_topic).join(ss_word_topic)
+        topic_word = self.model.topic_word_
+        prob = np.einsum('ij,ij->j', y[ix.ip_topic].T, topic_word[:, ix.word_topic])
+        prob = pd.Series(prob, index=df_ip_wc.index, name="prob")
+        df_prob = self.data[["sip", "src_word", "dip", "dst_word"]].join(prob, on=["sip", "src_word"]).join(prob, on=["dip", "dst_word"],
+                                                                                                 lsuffix="s", rsuffix="d")
+        ss_prob = df_prob[["probs", "probd"]].max(axis=1)
+        ss_prob.name = "prob"
+        print ss_prob
