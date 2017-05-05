@@ -74,7 +74,9 @@ class FlowSuspiciousConnectsModel:
     def train(self, df):
         df = df.unstack().fillna(0).astype(int)
         X = df.as_matrix()
-        self.model = lda.LDA(n_topics=self.config["topic_count"], n_iter=20, random_state=1)
+        print X
+        self.model = lda.LDA(n_topics=self.config["n_topics"], n_iter=self.config["n_iter"], 
+                        random_state=self.config["random_state"], alpha=self.config["alpha"])
         self.model.fit(X)
 
     def predict(self, df_ip_wc):
@@ -87,12 +89,11 @@ class FlowSuspiciousConnectsModel:
         ss_word_topic = pd.Series(xrange(len(vocal)), index=pd.Index(vocal, name="word"), name="word_topic")
         ix = df_ip_wc.to_frame().join(ss_ip_topic).join(ss_word_topic)
         topic_word = self.model.topic_word_
-        print ix
-        print topic_word
         prob = np.einsum('ij,ij->j', y[ix.ip_topic].T, topic_word[:, ix.word_topic])
         prob = pd.Series(prob, index=df_ip_wc.index, name="prob")
         df_prob = self.data[["sip", "src_word", "dip", "dst_word"]].join(prob, on=["sip", "src_word"]).join(prob, on=["dip", "dst_word"],
                                                                                                  lsuffix="s", rsuffix="d")
-        ss_prob = df_prob[["probs", "probd"]].max(axis=1)
+        ss_prob = df_prob[["probs", "probd"]].min(axis=1)
         ss_prob.name = "prob"
-        print ss_prob
+        self.data["scpre"] = ss_prob
+        print self.data

@@ -3,7 +3,10 @@ from analysis import FlowConnectsAnalysis
 from model import FlowSuspiciousConnectsModel
 
 config = {
-    "topic_count": 20
+    "n_topics": 4,
+    "n_iter": 20,
+    "random_state": 1,
+    "alpha": 1.02
 }
 
 def main():
